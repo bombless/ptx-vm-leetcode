@@ -4,6 +4,8 @@ import json
 import math
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import time
 import uuid
@@ -22,111 +24,223 @@ STATIC_DIR = BASE_DIR / "static"
 RUNTIME_DIR = BASE_DIR / ".runtime"
 UPLOAD_DIR = RUNTIME_DIR / "uploads"
 SOURCE_DIR = RUNTIME_DIR / "solutions"
+JUDGE_JOB_DIR = RUNTIME_DIR / "judge_jobs"
 
-for directory in (RUNTIME_DIR, UPLOAD_DIR, SOURCE_DIR):
+for directory in (RUNTIME_DIR, UPLOAD_DIR, SOURCE_DIR, JUDGE_JOB_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 
 PROBLEM_ID = "gpu-vector-add-f32"
+NVCC_TIMEOUT_SECONDS = 90
+RUN_TIMEOUT_SECONDS = 20
 
-STARTER_CODE = """// PTX VM Challenge 001
-// Keep the solve kernel signature unchanged.
-// Write the final result into vector C.
+STARTER_CODE = """#include <cuda_runtime.h>
 
-.version 7.0
-.target sm_50
-.address_size 64
+__global__ void vector_add(const float* A, const float* B, float* C, int N) {
+}
 
-.entry solve(
-    .param .u64 A,
-    .param .u64 B,
-    .param .u64 C,
-    .param .u32 N
-)
-{
-    .reg .pred %p<2>;
-    .reg .s32 %r<10>;
-    .reg .u64 %rd<10>;
-    .reg .f32 %f<4>;
+// A, B, C are device pointers (i.e. pointers to memory on the GPU)
+extern "C" void solve(const float* A, const float* B, float* C, int N) {
+    int threadsPerBlock = 256;
+    int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
 
-    ld.param.u64 %rd1, [A];
-    ld.param.u64 %rd2, [B];
-    ld.param.u64 %rd3, [C];
-    ld.param.u32 %r1, [N];
-
-    mov.s32 %r2, 0;
-
-LOOP:
-    // TODO: if i >= N, branch to DONE
-
-    // TODO: compute byte offset = i * 4
-    // TODO: load A[i] and B[i]
-    // TODO: add them as float32 values
-    // TODO: store the answer into C[i]
-
-    // TODO: i++
-    bra LOOP;
-
-DONE:
-    exit;
+    vector_add<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, N);
+    cudaDeviceSynchronize();
 }
 """
 
-REFERENCE_SOLUTION = """// Reference solution used by the local judge.
-.version 7.0
-.target sm_50
-.address_size 64
+REFERENCE_SOLUTION = """#include <cuda_runtime.h>
 
-.entry solve(
-    .param .u64 A,
-    .param .u64 B,
-    .param .u64 C,
-    .param .u32 N
-)
-{
-    .reg .pred %p<3>;
-    .reg .s32 %r<10>;
-    .reg .u64 %rd<10>;
-    .reg .f32 %f<4>;
+__global__ void vector_add(const float* A, const float* B, float* C, int N) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < N) {
+        C[index] = A[index] + B[index];
+    }
+}
 
-    ld.param.u64 %rd1, [A];
-    ld.param.u64 %rd2, [B];
-    ld.param.u64 %rd3, [C];
-    ld.param.u32 %r1, [N];
+// A, B, C are device pointers (i.e. pointers to memory on the GPU)
+extern "C" void solve(const float* A, const float* B, float* C, int N) {
+    int threadsPerBlock = 256;
+    int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
 
-    mov.s32 %r2, 0;
-
-LOOP:
-    setp.ge.s32 %p1, %r2, %r1;
-    @%p1 bra DONE;
-
-    mul.lo.s32 %r3, %r2, 4;
-    cvt.u64.s32 %rd4, %r3;
-    add.u64 %rd5, %rd1, %rd4;
-    add.u64 %rd6, %rd2, %rd4;
-    add.u64 %rd7, %rd3, %rd4;
-
-    ld.global.f32 %f1, [%rd5];
-    ld.global.f32 %f2, [%rd6];
-    add.f32 %f3, %f1, %f2;
-    st.global.f32 [%rd7], %f3;
-
-    add.s32 %r2, %r2, 1;
-    bra LOOP;
-
-DONE:
-    exit;
+    vector_add<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, N);
+    cudaDeviceSynchronize();
 }
 """
+
+JUDGE_DRIVER_SOURCE = """#include <cuda_runtime.h>
+
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+extern "C" void solve(const float* A, const float* B, float* C, int N);
+
+static std::string escape_json(const std::string& text) {
+    std::string escaped;
+    escaped.reserve(text.size());
+    for (char ch : text) {
+        switch (ch) {
+            case '\\\\':
+                escaped += "\\\\\\\\";
+                break;
+            case '\"':
+                escaped += "\\\\\\\"";
+                break;
+            case '\\n':
+                escaped += "\\\\n";
+                break;
+            case '\\r':
+                escaped += "\\\\r";
+                break;
+            case '\\t':
+                escaped += "\\\\t";
+                break;
+            default:
+                escaped += ch;
+                break;
+        }
+    }
+    return escaped;
+}
+
+static void print_error(const std::string& message) {
+    std::cout << "{\\\"ok\\\":false,\\\"error\\\":\\\"" << escape_json(message) << "\\\"}";
+}
+
+static std::vector<float> parse_csv(const std::string& text) {
+    std::vector<float> values;
+    if (text.empty()) {
+        return values;
+    }
+
+    std::stringstream stream(text);
+    std::string token;
+    while (std::getline(stream, token, ',')) {
+        if (token.empty()) {
+            continue;
+        }
+        values.push_back(std::stof(token));
+    }
+    return values;
+}
+
+static bool check_cuda(cudaError_t status, const std::string& step) {
+    if (status == cudaSuccess) {
+        return true;
+    }
+
+    print_error(step + ": " + cudaGetErrorString(status));
+    return false;
+}
+
+int main(int argc, char** argv) {
+    if (argc != 3) {
+        print_error("Expected two CSV arguments: A and B.");
+        return 1;
+    }
+
+    std::vector<float> host_a = parse_csv(argv[1]);
+    std::vector<float> host_b = parse_csv(argv[2]);
+    if (host_a.size() != host_b.size()) {
+        print_error("Input vectors must have identical lengths.");
+        return 1;
+    }
+
+    const int count = static_cast<int>(host_a.size());
+    std::vector<float> host_c(static_cast<size_t>(count), 0.0f);
+    const size_t bytes = static_cast<size_t>(count) * sizeof(float);
+
+    float* device_a = nullptr;
+    float* device_b = nullptr;
+    float* device_c = nullptr;
+
+    if (!check_cuda(cudaMalloc(&device_a, bytes), "cudaMalloc(A)")) {
+        return 1;
+    }
+    if (!check_cuda(cudaMalloc(&device_b, bytes), "cudaMalloc(B)")) {
+        cudaFree(device_a);
+        return 1;
+    }
+    if (!check_cuda(cudaMalloc(&device_c, bytes), "cudaMalloc(C)")) {
+        cudaFree(device_a);
+        cudaFree(device_b);
+        return 1;
+    }
+    if (!check_cuda(cudaMemcpy(device_a, host_a.data(), bytes, cudaMemcpyHostToDevice), "cudaMemcpy(A)")) {
+        cudaFree(device_a);
+        cudaFree(device_b);
+        cudaFree(device_c);
+        return 1;
+    }
+    if (!check_cuda(cudaMemcpy(device_b, host_b.data(), bytes, cudaMemcpyHostToDevice), "cudaMemcpy(B)")) {
+        cudaFree(device_a);
+        cudaFree(device_b);
+        cudaFree(device_c);
+        return 1;
+    }
+
+    solve(device_a, device_b, device_c, count);
+
+    if (!check_cuda(cudaGetLastError(), "Kernel launch")) {
+        cudaFree(device_a);
+        cudaFree(device_b);
+        cudaFree(device_c);
+        return 1;
+    }
+    if (!check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize")) {
+        cudaFree(device_a);
+        cudaFree(device_b);
+        cudaFree(device_c);
+        return 1;
+    }
+    if (!check_cuda(cudaMemcpy(host_c.data(), device_c, bytes, cudaMemcpyDeviceToHost), "cudaMemcpy(C)")) {
+        cudaFree(device_a);
+        cudaFree(device_b);
+        cudaFree(device_c);
+        return 1;
+    }
+
+    cudaFree(device_a);
+    cudaFree(device_b);
+    cudaFree(device_c);
+
+    std::cout << "{\\\"ok\\\":true,\\\"output\\\":[";
+    for (size_t index = 0; index < host_c.size(); ++index) {
+        if (index != 0) {
+            std::cout << ',';
+        }
+        std::cout << std::setprecision(9) << host_c[index];
+    }
+    std::cout << "]}";
+    return 0;
+}
+"""
+
+SOLUTION_SIGNATURE_PATTERN = re.compile(
+    r'extern\s+"C"\s+void\s+solve\s*\(\s*'
+    r'const\s+float\s*\*\s*A\s*,\s*'
+    r'const\s+float\s*\*\s*B\s*,\s*'
+    r'float\s*\*\s*C\s*,\s*'
+    r'int\s+N\s*'
+    r'\)',
+    re.MULTILINE,
+)
 
 PROBLEM = {
     "id": PROBLEM_ID,
     "slug": PROBLEM_ID,
     "number": 1,
-    "title": "Vector Add on PTX VM",
+    "title": "Vector Add in CUDA",
     "difficulty": "Medium",
-    "category": "GPU / PTX",
-    "signature": ".entry solve(.param .u64 A, .param .u64 B, .param .u64 C, .param .u32 N)",
+    "category": "GPU / CUDA",
+    "signature": (
+        'solution.cu\n'
+        '__global__ void vector_add(const float* A, const float* B, float* C, int N);\n'
+        'extern "C" void solve(const float* A, const float* B, float* C, int N);'
+    ),
     "statement": (
         "Write a GPU program that performs element-wise addition of two vectors containing "
         "32-bit floating point numbers. The program should take two input vectors of equal "
@@ -161,11 +275,13 @@ PROBLEM = {
         "Performance is measured with N = 25,000,000",
     ],
     "notes": [
-        "This judge runs on the PTX VM in this repository.",
-        "The evaluation harness launches a single logical thread, so iterate over N inside solve instead of relying on %tid.x.",
-        "Parameter names and types are checked exactly against the required solve signature.",
+        "Submit CUDA source as solution.cu, or paste it directly into the editor.",
+        "A, B, and C are device pointers that already point to GPU memory.",
+        "The provided solve wrapper already launches the kernel, so most solutions only need to fill vector_add.",
+        "The local judge compiles your CUDA code with nvcc and executes it on this machine's NVIDIA GPU.",
     ],
     "starter_code": STARTER_CODE,
+    "starter_filename": "solution.cu",
 }
 
 SAMPLE_CASES = [
@@ -237,6 +353,57 @@ def resolve_runner() -> Path:
     )
 
 
+def resolve_nvcc() -> Path:
+    override = os.environ.get("PTX_WEB_NVCC")
+    candidates: List[Path] = []
+    if override:
+        candidates.append(Path(override))
+
+    which_nvcc = shutil.which("nvcc")
+    if which_nvcc:
+        candidates.append(Path(which_nvcc))
+
+    candidates.append(Path("/opt/cuda/bin/nvcc"))
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise RuntimeError(
+        "Could not find nvcc. Install the CUDA toolkit or set PTX_WEB_NVCC=/path/to/nvcc."
+    )
+
+
+def resolve_cuda_arch() -> str:
+    override = os.environ.get("PTX_WEB_CUDA_ARCH")
+    if override:
+        return override
+
+    try:
+        process = subprocess.run(
+            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "native"
+
+    if process.returncode != 0:
+        return "native"
+
+    first_line = process.stdout.strip().splitlines()
+    if not first_line:
+        return "native"
+
+    digits = first_line[0].strip().replace(".", "")
+    if digits.isdigit():
+        return f"sm_{digits}"
+
+    return "native"
+
+
 def compact_logs(logs: str, max_chars: int = 6000) -> str:
     if len(logs) <= max_chars:
         return logs
@@ -247,6 +414,150 @@ def compact_logs(logs: str, max_chars: int = 6000) -> str:
 
 def build_expected(values_a: List[float], values_b: List[float]) -> List[float]:
     return [left + right for left, right in zip(values_a, values_b)]
+
+
+def format_process_logs(command: List[str], stdout: str, stderr: str) -> str:
+    parts = [f"$ {shlex.join(command)}"]
+    if stdout.strip():
+        parts.append(f"stdout:\n{stdout.strip()}")
+    if stderr.strip():
+        parts.append(f"stderr:\n{stderr.strip()}")
+    return "\n\n".join(parts)
+
+
+def validate_cuda_source_signature(source: str) -> str | None:
+    if SOLUTION_SIGNATURE_PATTERN.search(source):
+        return None
+
+    return (
+        'solve must keep the exact signature '
+        'extern "C" void solve(const float* A, const float* B, float* C, int N).'
+    )
+
+
+def create_job_dir() -> Path:
+    job_dir = JUDGE_JOB_DIR / uuid.uuid4().hex
+    job_dir.mkdir(parents=True, exist_ok=True)
+    return job_dir
+
+
+def write_cuda_solution(source: str, job_dir: Path) -> Path:
+    solution_path = job_dir / "solution.cu"
+    solution_path.write_text(source, encoding="utf-8")
+    return solution_path
+
+
+def write_judge_driver(job_dir: Path) -> Path:
+    driver_path = job_dir / "judge_driver.cpp"
+    driver_path.write_text(JUDGE_DRIVER_SOURCE, encoding="utf-8")
+    return driver_path
+
+
+def compile_cuda_solution(source: str) -> tuple[Path | None, str]:
+    job_dir = create_job_dir()
+    solution_path = write_cuda_solution(source, job_dir)
+    driver_path = write_judge_driver(job_dir)
+    executable_path = job_dir / "judge_runner"
+
+    nvcc = resolve_nvcc()
+    arch = resolve_cuda_arch()
+    command = [
+        str(nvcc),
+        "-std=c++17",
+        "-O2",
+        f"-arch={arch}",
+        "-o",
+        str(executable_path),
+        str(solution_path),
+        str(driver_path),
+    ]
+
+    try:
+        process = subprocess.run(
+            command,
+            cwd=job_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=NVCC_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None, format_process_logs(command, "", "Compilation timed out.")
+
+    logs = format_process_logs(command, process.stdout, process.stderr)
+    if process.returncode != 0 or not executable_path.exists():
+        return None, logs
+
+    return executable_path, logs
+
+
+def extract_cuda_output(run_payload: dict) -> List[float]:
+    return [float(value) for value in run_payload.get("output", [])]
+
+
+def compare_vectors(actual: List[float], expected: List[float], tolerance: float = 1e-5) -> str | None:
+    if len(actual) != len(expected):
+        return f"Expected {len(expected)} values in C, but the program produced {len(actual)}."
+
+    for index, (got, want) in enumerate(zip(actual, expected)):
+        if not math.isclose(got, want, rel_tol=tolerance, abs_tol=tolerance):
+            return f"Mismatch at index {index}: expected {want}, got {got}."
+
+    return None
+
+
+def build_case_result(case: dict, passed: bool, expected: List[float], actual: List[float] | None, message: str) -> dict:
+    payload = {
+        "name": case["name"],
+        "hidden": case["hidden"],
+        "passed": passed,
+        "n": len(case["A"]),
+        "message": message,
+    }
+
+    if not case["hidden"]:
+        payload["input"] = {"A": case["A"], "B": case["B"]}
+        payload["expected"] = expected
+        payload["actual"] = actual
+
+    return payload
+
+
+def run_case(executable_path: Path, case: dict) -> tuple[dict | None, str, str | None]:
+    command = [
+        str(executable_path),
+        serialize_values(case["A"]),
+        serialize_values(case["B"]),
+    ]
+
+    try:
+        process = subprocess.run(
+            command,
+            cwd=executable_path.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=RUN_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        logs = format_process_logs(command, "", "Execution timed out.")
+        return None, logs, "Execution timed out."
+
+    logs = format_process_logs(command, process.stdout, process.stderr)
+    stdout = process.stdout.strip()
+    if not stdout:
+        error_message = process.stderr.strip() or "Judge runner returned no output."
+        return None, logs, error_message
+
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        return None, logs, f"Judge runner returned invalid JSON: {error}"
+
+    if process.returncode != 0 or not payload.get("ok"):
+        return None, logs, payload.get("error", "Runtime error during CUDA execution.")
+
+    return payload, logs, None
 
 
 class PointerRequest(BaseModel):
@@ -267,7 +578,7 @@ class SolutionRequest(BaseModel):
     source: str = Field(min_length=1, max_length=200000)
 
 
-app = FastAPI(title="PTX Challenge Arena")
+app = FastAPI(title="CUDA Challenge Arena")
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
 
 PROGRAMS: Dict[str, Path] = {}
@@ -308,130 +619,10 @@ def invoke_runner(arguments: List[str]) -> dict:
     return payload
 
 
-def write_solution_source(source: str) -> Path:
-    file_path = SOURCE_DIR / f"{uuid.uuid4().hex}.ptx"
-    file_path.write_text(source, encoding="utf-8")
-    return file_path
-
-
-def validate_signature(inspect_payload: dict) -> str | None:
-    required_parameters = [
-        {"name": "A", "type": ".u64", "is_pointer": True},
-        {"name": "B", "type": ".u64", "is_pointer": True},
-        {"name": "C", "type": ".u64", "is_pointer": True},
-        {"name": "N", "type": ".u32", "is_pointer": False},
-    ]
-
-    solve_kernel = None
-    for kernel in inspect_payload.get("kernels", []):
-        if kernel.get("name") == "solve":
-            solve_kernel = kernel
-            break
-
-    if solve_kernel is None:
-        return "Expected an entry kernel named solve."
-
-    parameters = solve_kernel.get("parameters", [])
-    if len(parameters) != len(required_parameters):
-        return (
-            "solve must declare exactly four parameters: "
-            "(.u64 A, .u64 B, .u64 C, .u32 N)."
-        )
-
-    for actual, expected in zip(parameters, required_parameters):
-        if (
-            actual.get("name") != expected["name"]
-            or actual.get("type") != expected["type"]
-            or actual.get("is_pointer") != expected["is_pointer"]
-        ):
-            return (
-                "solve must keep the exact signature "
-                "(.u64 A, .u64 B, .u64 C, .u32 N)."
-            )
-
-    return None
-
-
-def extract_output_vector(run_payload: dict) -> List[float]:
-    for buffer in run_payload.get("pointer_buffers", []):
-        if buffer.get("name") == "C":
-            return [float(value) for value in buffer.get("after", [])]
-    raise RuntimeError("The judge could not locate vector C in the runner output.")
-
-
-def compare_vectors(actual: List[float], expected: List[float], tolerance: float = 1e-5) -> str | None:
-    if len(actual) != len(expected):
-        return f"Expected {len(expected)} values in C, but the program produced {len(actual)}."
-
-    for index, (got, want) in enumerate(zip(actual, expected)):
-        if not math.isclose(got, want, rel_tol=tolerance, abs_tol=tolerance):
-            return f"Mismatch at index {index}: expected {want}, got {got}."
-
-    return None
-
-
-def build_case_result(case: dict, passed: bool, expected: List[float], actual: List[float] | None, message: str) -> dict:
-    payload = {
-        "name": case["name"],
-        "hidden": case["hidden"],
-        "passed": passed,
-        "n": len(case["A"]),
-        "message": message,
-    }
-
-    if not case["hidden"]:
-        payload["input"] = {"A": case["A"], "B": case["B"]}
-        payload["expected"] = expected
-        payload["actual"] = actual
-
-    return payload
-
-
-def run_case(source_path: Path, case: dict) -> tuple[dict | None, str | None]:
-    command = [
-        "run",
-        str(source_path),
-        "--kernel",
-        "solve",
-        "--grid",
-        "1,1,1",
-        "--block",
-        "1,1,1",
-        "--pointer",
-        f"A=float32@{len(case['A'])}:{serialize_values(case['A'])}",
-        "--pointer",
-        f"B=float32@{len(case['B'])}:{serialize_values(case['B'])}",
-        "--pointer",
-        f"C=float32@{len(case['A'])}:{serialize_values([0.0] * len(case['A']))}",
-        "--scalar",
-        f"N={len(case['A'])}",
-    ]
-
-    payload = invoke_runner(command)
-    if not payload.get("ok"):
-        return None, f"{payload.get('error', 'Runtime error')}\n\n{compact_logs(payload.get('logs', ''))}"
-    return payload, None
-
-
 def judge_solution(source: str, cases: List[dict], mode: str) -> dict:
     started_at = time.perf_counter()
-    source_path = write_solution_source(source)
 
-    inspect_payload = invoke_runner(["inspect", str(source_path)])
-    if not inspect_payload.get("ok"):
-        return {
-            "ok": False,
-            "mode": mode,
-            "status": "compile_error",
-            "summary": inspect_payload.get("error", "Failed to parse PTX source."),
-            "passed": 0,
-            "total": len(cases),
-            "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
-            "cases": [],
-            "logs": compact_logs(inspect_payload.get("logs", "")),
-        }
-
-    signature_error = validate_signature(inspect_payload)
+    signature_error = validate_cuda_source_signature(source)
     if signature_error is not None:
         return {
             "ok": False,
@@ -445,17 +636,33 @@ def judge_solution(source: str, cases: List[dict], mode: str) -> dict:
             "logs": "",
         }
 
+    executable_path, compile_logs = compile_cuda_solution(source)
+    if executable_path is None:
+        return {
+            "ok": False,
+            "mode": mode,
+            "status": "compile_error",
+            "summary": "nvcc failed to compile solution.cu.",
+            "passed": 0,
+            "total": len(cases),
+            "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+            "cases": [],
+            "logs": compact_logs(compile_logs),
+        }
+
     passed = 0
     case_results = []
-    combined_logs: List[str] = []
+    combined_logs: List[str] = [compile_logs]
 
     for case in cases:
         expected = build_expected(case["A"], case["B"])
-        run_payload, runtime_error = run_case(source_path, case)
+        run_payload, case_logs, runtime_error = run_case(executable_path, case)
+        combined_logs.append(case_logs)
 
         if runtime_error is not None:
-            case_results.append(build_case_result(case, False, expected, None, "Runtime error during execution."))
-            combined_logs.append(runtime_error)
+            case_results.append(
+                build_case_result(case, False, expected, None, f"Runtime error: {runtime_error}")
+            )
             return {
                 "ok": False,
                 "mode": mode,
@@ -468,7 +675,7 @@ def judge_solution(source: str, cases: List[dict], mode: str) -> dict:
                 "logs": compact_logs("\n\n".join(combined_logs)),
             }
 
-        actual = extract_output_vector(run_payload)
+        actual = extract_cuda_output(run_payload)
         mismatch = compare_vectors(actual, expected)
         if mismatch is None:
             passed += 1
@@ -479,7 +686,6 @@ def judge_solution(source: str, cases: List[dict], mode: str) -> dict:
             case_results.append(
                 build_case_result(case, False, expected, actual if not case["hidden"] else None, mismatch)
             )
-            combined_logs.append(run_payload.get("logs", ""))
             return {
                 "ok": False,
                 "mode": mode,
@@ -491,8 +697,6 @@ def judge_solution(source: str, cases: List[dict], mode: str) -> dict:
                 "cases": case_results,
                 "logs": compact_logs("\n\n".join(combined_logs)),
             }
-
-        combined_logs.append(run_payload.get("logs", ""))
 
     label = "sample" if mode == "sample" else "submission"
     return {

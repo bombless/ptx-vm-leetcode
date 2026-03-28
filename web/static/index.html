@@ -3,17 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PTX Challenge Arena</title>
+    <title>CUDA Challenge Arena</title>
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
     <div class="arena-shell">
       <header class="topbar">
         <div class="brand-block">
-          <span class="brand-mark">PTX</span>
+          <span class="brand-mark">CUDA</span>
           <div>
             <p class="eyebrow">Challenge Arena</p>
-            <h1>LeetCode-style PTX practice on top of this VM</h1>
+            <h1>LeetCode-style CUDA practice with local GPU judging</h1>
           </div>
         </div>
         <div class="topbar-card">
@@ -68,12 +68,12 @@
             <div class="editor-header">
               <div>
                 <p class="editor-caption">Editor</p>
-                <strong>Write PTX for <code>solve(A, B, C, N)</code></strong>
+                <strong>Edit <code>solution.cu</code> for <code>solve(A, B, C, N)</code></strong>
               </div>
               <div class="editor-tools">
                 <label class="ghost-button file-button">
-                  <input id="import-file" type="file" accept=".ptx" />
-                  <span>Import .ptx</span>
+                  <input id="import-file" type="file" accept=".cu" />
+                  <span>Import solution.cu</span>
                 </label>
                 <button id="reset-button" class="ghost-button" type="button">Reset Template</button>
               </div>
@@ -106,7 +106,7 @@
             <div id="result-empty" class="result-empty">
               <strong>Ready for your first submission.</strong>
               <p>
-                Start from the provided PTX template, then use <em>Run Samples</em> to validate the visible
+                Start from the provided CUDA template, then use <em>Run Samples</em> to validate the visible
                 examples or <em>Submit</em> to run the complete local judge.
               </p>
             </div>

@@ -186,7 +186,7 @@ function renderResult(payload) {
   resultModeChip.className = `mode-chip ${payload.ok ? "mode-pass" : "mode-fail"}`;
   renderSummary(payload);
   renderCases(payload.cases || []);
-  judgeLogs.textContent = payload.logs || "No runner logs captured.";
+  judgeLogs.textContent = payload.logs || "No judge logs captured.";
 }
 
 function setBusy(isBusy, message) {
@@ -208,10 +208,10 @@ async function loadProblem() {
     }
 
     state.problem = payload.problem;
-    state.storageKey = `ptx-arena:${state.problem.id}:source`;
+    state.storageKey = `cuda-arena:${state.problem.id}:source`;
     renderProblem(state.problem);
     loadInitialSource(state.problem);
-    setStatus("Challenge loaded. Edit the PTX template and run the samples.", "success");
+    setStatus("Challenge loaded. Edit solution.cu and run the samples.", "success");
   } catch (error) {
     setStatus(error.message, "error");
   }
@@ -225,7 +225,7 @@ async function executeJudge(mode) {
 
   const source = codeEditor.value.trim();
   if (!source) {
-    setStatus("Write or import some PTX code before running the judge.", "error");
+    setStatus("Write or import a CUDA solution before running the judge.", "error");
     return;
   }
 
