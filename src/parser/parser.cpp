@@ -10,6 +10,20 @@
 
 // PTXInstruction is defined in instruction_types.hpp (included via parser.hpp)
 
+namespace {
+
+bool isFunctionDeclarationLine(const std::string& line) {
+    static const std::regex functionRegex(R"(^(?:\.\w+\s+)*\.(?:entry|func)\b)");
+    return std::regex_search(line, functionRegex);
+}
+
+bool isEntryDeclaration(const std::string& line) {
+    static const std::regex entryRegex(R"(^(?:\.\w+\s+)*\.entry\b)");
+    return std::regex_search(line, entryRegex);
+}
+
+}  // namespace
+
 // PTXParser::Impl - 私有实现类
 class PTXParser::Impl
 {
@@ -117,7 +131,7 @@ bool PTXParser::Impl::firstPass()
         const std::string &line = m_lines[i];
         if (parseMetadata(line))
             continue;
-        if (line.find(".entry") == 0 || line.find(".func") == 0)
+        if (isFunctionDeclarationLine(line))
         {
             currentFunction = parseFunctionDeclaration(line, i);
             if (currentFunction)
@@ -173,7 +187,7 @@ bool PTXParser::Impl::secondPass()
         const std::string& line = m_lines[i];
         
         // Check for function declaration (before opening brace)
-        if (!inFunctionBody && (line.find(".entry") == 0 || line.find(".func") == 0))
+        if (!inFunctionBody && isFunctionDeclarationLine(line))
         {
             std::string funcName = extractFunctionName(line);
             // Find this function in the already-parsed functions
@@ -240,7 +254,7 @@ bool PTXParser::Impl::parseMetadata(const std::string &line)
 PTXFunction *PTXParser::Impl::parseFunctionDeclaration(const std::string &line, size_t &lineIndex)
 {
     PTXFunction func;
-    func.isEntry = (line.find(".entry") == 0);
+    func.isEntry = isEntryDeclaration(line);
     std::string fullDecl = line;
     while (fullDecl.find(")") == std::string::npos && lineIndex + 1 < m_lines.size())
     {
@@ -259,7 +273,7 @@ PTXFunction *PTXParser::Impl::parseFunctionDeclaration(const std::string &line, 
 
 std::string PTXParser::Impl::extractFunctionName(const std::string &declaration)
 {
-    std::regex nameRegex(R"(\.(?:entry|func)\s+(?:\([^)]*\)\s+)?(\w+)\s*\()");
+    std::regex nameRegex(R"((?:\.\w+\s+)*\.(?:entry|func)\s+(?:\([^)]*\)\s+)?(\w+)\s*\()");
     std::smatch matches;
     if (std::regex_search(declaration, matches, nameRegex))
     {

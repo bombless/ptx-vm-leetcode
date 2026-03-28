@@ -22,6 +22,7 @@ endif()
 option(BUILD_TESTS "Build test programs" ON)
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_DOCUMENTATION "Build documentation" ON)
+option(BUILD_WEBAPP "Build the PTX web runner and web assets" ON)
 
 add_compile_options(-g)
 
@@ -36,6 +37,9 @@ add_subdirectory(src/debugger)
 add_subdirectory(src/host)
 add_subdirectory(src/parser)
 add_subdirectory(src/registers)
+if(BUILD_WEBAPP)
+    add_subdirectory(web)
+endif()
 
 # Main executable
 add_executable(ptx_vm
