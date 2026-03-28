@@ -260,6 +260,73 @@ public:
         
         return result;
     }
+
+    void storeTypedRegisterValue(size_t index, DataType dataType, uint64_t rawValue) {
+        m_performanceCounters->increment(PerformanceCounterIDs::REGISTER_WRITES);
+
+        switch (dataType) {
+            case DataType::F32: {
+                uint32_t bits = static_cast<uint32_t>(rawValue);
+                float value = 0.0f;
+                std::memcpy(&value, &bits, sizeof(value));
+                m_registerBank->writeFloatRegister(index, value);
+                break;
+            }
+            case DataType::F64: {
+                double value = 0.0;
+                std::memcpy(&value, &rawValue, sizeof(value));
+                m_registerBank->writeDoubleRegister(index, value);
+                break;
+            }
+            default:
+                m_registerBank->writeRegister(index, rawValue);
+                break;
+        }
+    }
+
+    uint64_t readTypedSourceBits(const Operand& operand, DataType dataType) {
+        if (operand.type == OperandType::REGISTER) {
+            m_performanceCounters->increment(PerformanceCounterIDs::REGISTER_READS);
+
+            switch (dataType) {
+                case DataType::F32: {
+                    const float value = m_registerBank->readFloatRegister(operand.registerIndex);
+                    uint32_t bits = 0;
+                    std::memcpy(&bits, &value, sizeof(bits));
+                    return static_cast<uint64_t>(bits);
+                }
+                case DataType::F64: {
+                    const double value = m_registerBank->readDoubleRegister(operand.registerIndex);
+                    uint64_t bits = 0;
+                    std::memcpy(&bits, &value, sizeof(bits));
+                    return bits;
+                }
+                default:
+                    return m_registerBank->readRegister(operand.registerIndex);
+            }
+        }
+
+        if (operand.type == OperandType::IMMEDIATE) {
+            switch (dataType) {
+                case DataType::F32: {
+                    const float value = static_cast<float>(operand.immediateValue);
+                    uint32_t bits = 0;
+                    std::memcpy(&bits, &value, sizeof(bits));
+                    return static_cast<uint64_t>(bits);
+                }
+                case DataType::F64: {
+                    const double value = static_cast<double>(operand.immediateValue);
+                    uint64_t bits = 0;
+                    std::memcpy(&bits, &value, sizeof(bits));
+                    return bits;
+                }
+                default:
+                    return static_cast<uint64_t>(operand.immediateValue);
+            }
+        }
+
+        return static_cast<uint64_t>(getSourceValue(operand));
+    }
     
     // Execute LD for a specific memory space
     bool executeLDMemorySpace(const DecodedInstruction& instr, MemorySpace space) {
@@ -331,7 +398,7 @@ public:
                 break;
         }
         
-        storeRegisterValue(instr.dest.registerIndex, value);
+        storeTypedRegisterValue(instr.dest.registerIndex, instr.dataType, value);
         m_currentInstructionIndex++;
         return true;
     }
@@ -345,7 +412,7 @@ public:
             return true;
         }
         
-        int64_t src = getSourceValue(instr.sources[0]);
+        const uint64_t rawValue = readTypedSourceBits(instr.sources[0], instr.dataType);
         
         // Calculate memory address
         uint64_t address = instr.dest.address;
@@ -384,22 +451,22 @@ public:
         switch (instr.dataType) {
             case DataType::S8:
             case DataType::U8:
-                m_memorySubsystem->write<uint8_t>(space, address, static_cast<uint8_t>(src));
+                m_memorySubsystem->write<uint8_t>(space, address, static_cast<uint8_t>(rawValue));
                 break;
             case DataType::S16:
             case DataType::U16:
-                m_memorySubsystem->write<uint16_t>(space, address, static_cast<uint16_t>(src));
+                m_memorySubsystem->write<uint16_t>(space, address, static_cast<uint16_t>(rawValue));
                 break;
             case DataType::S32:
             case DataType::U32:
             case DataType::F32:
-                m_memorySubsystem->write<uint32_t>(space, address, static_cast<uint32_t>(src));
+                m_memorySubsystem->write<uint32_t>(space, address, static_cast<uint32_t>(rawValue));
                 break;
             case DataType::S64:
             case DataType::U64:
             case DataType::F64:
             default:
-                m_memorySubsystem->write<uint64_t>(space, address, static_cast<uint64_t>(src));
+                m_memorySubsystem->write<uint64_t>(space, address, rawValue);
                 break;
         }
         
@@ -1246,17 +1313,51 @@ public:
         std::cout << "LD_PARAM: loading from offset " << paramOffset 
                   << " (source type=" << static_cast<int>(instr.sources[0].type) << ")" << std::endl;
         
-        // Read from parameter memory
-        // Note: Use buffer-relative addressing (paramOffset directly), not absolute address
-        // The PARAMETER memory space buffer starts at offset 0
-        paramValue = impl.m_memorySubsystem->read<uint64_t>(MemorySpace::PARAMETER, paramOffset);
+        // Read from parameter memory using the declared operand width.
+        // Note: Use buffer-relative addressing (paramOffset directly), not absolute address.
+        switch (instr.dataType) {
+            case DataType::S8:
+                paramValue = static_cast<uint64_t>(
+                    static_cast<int64_t>(static_cast<int8_t>(
+                        impl.m_memorySubsystem->read<uint8_t>(MemorySpace::PARAMETER, paramOffset))));
+                break;
+            case DataType::U8:
+                paramValue = static_cast<uint64_t>(
+                    impl.m_memorySubsystem->read<uint8_t>(MemorySpace::PARAMETER, paramOffset));
+                break;
+            case DataType::S16:
+                paramValue = static_cast<uint64_t>(
+                    static_cast<int64_t>(static_cast<int16_t>(
+                        impl.m_memorySubsystem->read<uint16_t>(MemorySpace::PARAMETER, paramOffset))));
+                break;
+            case DataType::U16:
+                paramValue = static_cast<uint64_t>(
+                    impl.m_memorySubsystem->read<uint16_t>(MemorySpace::PARAMETER, paramOffset));
+                break;
+            case DataType::S32:
+                paramValue = static_cast<uint64_t>(
+                    static_cast<int64_t>(static_cast<int32_t>(
+                        impl.m_memorySubsystem->read<uint32_t>(MemorySpace::PARAMETER, paramOffset))));
+                break;
+            case DataType::U32:
+            case DataType::F32:
+                paramValue = static_cast<uint64_t>(
+                    impl.m_memorySubsystem->read<uint32_t>(MemorySpace::PARAMETER, paramOffset));
+                break;
+            case DataType::S64:
+            case DataType::U64:
+            case DataType::F64:
+            default:
+                paramValue = impl.m_memorySubsystem->read<uint64_t>(MemorySpace::PARAMETER, paramOffset);
+                break;
+        }
         
         // DEBUG: Print loaded value
         std::cout << "LD_PARAM: loaded value 0x" << std::hex << paramValue << std::dec 
                   << " into %r" << instr.dest.registerIndex << std::endl;
         
         // Store result in destination register
-        impl.storeRegisterValue(instr.dest.registerIndex, paramValue);
+        impl.storeTypedRegisterValue(instr.dest.registerIndex, instr.dataType, paramValue);
         
         // Move to next instruction
         impl.m_currentInstructionIndex++;

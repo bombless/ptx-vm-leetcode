@@ -1,122 +1,124 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PTX VM Web Runner</title>
+    <title>PTX Challenge Arena</title>
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
-    <div class="page-shell">
-      <header class="hero">
-        <div class="hero-copy">
-          <p class="eyebrow">PTX VM in Browser</p>
-          <h1>上传一个 <code>.ptx</code>，选中 kernel，然后直接运行</h1>
-          <p class="lede">
-            这个页面直接调用当前仓库里的 PTX VM。上传后会自动识别 entry kernel，支持标量参数和指针缓冲区参数，
-            并把执行后的缓冲区预览展示出来。
-          </p>
+    <div class="arena-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <span class="brand-mark">PTX</span>
+          <div>
+            <p class="eyebrow">Challenge Arena</p>
+            <h1>LeetCode-style PTX practice on top of this VM</h1>
+          </div>
         </div>
-        <div class="hero-panel">
-          <div class="metric">
-            <span class="metric-label">默认 Block</span>
-            <strong>32 x 1 x 1</strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">指针缓冲</span>
-            <strong>支持 int/uint/float</strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">固定地址观察</span>
-            <strong>0x10000 / 0x20000</strong>
-          </div>
+        <div class="topbar-card">
+          <span>Active problem set</span>
+          <strong>1 challenge online</strong>
         </div>
       </header>
 
-      <main class="workspace">
-        <section class="card control-card">
-          <div class="card-head">
-            <h2>1. 选择 PTX</h2>
-            <p>上传后会分析所有 entry kernel。</p>
-          </div>
-          <form id="inspect-form" class="stack">
-            <label class="file-picker">
-              <input id="ptx-file" name="file" type="file" accept=".ptx" required />
-              <span>选择 .ptx 文件</span>
-            </label>
-            <button id="inspect-button" class="primary-button" type="submit">加载并分析</button>
-          </form>
-          <div id="inspect-status" class="status-panel hidden"></div>
-          <div id="program-summary" class="summary hidden"></div>
-        </section>
-
-        <section class="card control-card hidden" id="run-card">
-          <div class="card-head">
-            <h2>2. 配置并运行</h2>
-            <p>支持选择 kernel、调整 grid / block，并为参数填值。</p>
-          </div>
-
-          <div class="grid-two">
-            <label class="field">
-              <span>Kernel</span>
-              <select id="kernel-select"></select>
-            </label>
-            <div class="dimension-row">
-              <label class="field compact">
-                <span>Grid</span>
-                <input id="grid-x" type="number" min="1" value="1" />
-              </label>
-              <label class="field compact">
-                <span>&nbsp;</span>
-                <input id="grid-y" type="number" min="1" value="1" />
-              </label>
-              <label class="field compact">
-                <span>&nbsp;</span>
-                <input id="grid-z" type="number" min="1" value="1" />
-              </label>
-            </div>
-            <div class="dimension-row">
-              <label class="field compact">
-                <span>Block</span>
-                <input id="block-x" type="number" min="1" value="32" />
-              </label>
-              <label class="field compact">
-                <span>&nbsp;</span>
-                <input id="block-y" type="number" min="1" value="1" />
-              </label>
-              <label class="field compact">
-                <span>&nbsp;</span>
-                <input id="block-z" type="number" min="1" value="1" />
-              </label>
+      <main class="main-grid">
+        <section class="panel problem-pane">
+          <div class="problem-head">
+            <div class="problem-number" id="problem-number">Problem 1</div>
+            <div class="problem-title-wrap">
+              <h2 id="problem-title">Loading challenge...</h2>
+              <div id="problem-meta" class="meta-row"></div>
             </div>
           </div>
 
-          <div id="parameter-panel" class="parameter-panel"></div>
+          <section class="section-block">
+            <h3>Description</h3>
+            <p id="problem-statement" class="section-copy"></p>
+          </section>
 
-          <div class="tip-box">
-            <strong>指针参数说明</strong>
-            <p>
-              指针参数会由后端自动分配设备内存。你可以选择缓冲区类型，设置元素个数，并填入逗号分隔的初始值。
-              如果初始值数量少于元素个数，剩余部分会自动补 0。
-            </p>
-          </div>
+          <section class="section-block">
+            <h3>Required Signature</h3>
+            <pre id="problem-signature" class="signature-box"></pre>
+          </section>
 
-          <button id="run-button" class="primary-button" type="button">运行 PTX</button>
-          <div id="run-status" class="status-panel hidden"></div>
+          <section class="section-block">
+            <h3>Implementation Requirements</h3>
+            <ul id="requirements-list" class="detail-list"></ul>
+          </section>
+
+          <section class="section-block">
+            <h3>Examples</h3>
+            <div id="examples-list" class="example-stack"></div>
+          </section>
+
+          <section class="section-block">
+            <h3>Constraints</h3>
+            <ul id="constraints-list" class="detail-list"></ul>
+          </section>
+
+          <section class="section-block">
+            <h3>Notes</h3>
+            <ul id="notes-list" class="detail-list"></ul>
+          </section>
         </section>
 
-        <section class="card results-card hidden" id="results-card">
-          <div class="card-head">
-            <h2>3. 执行结果</h2>
-            <p>这里会展示标量参数、指针缓冲区预览，以及固定地址内存观察结果。</p>
+        <section class="workspace-column">
+          <div class="panel editor-pane">
+            <div class="editor-header">
+              <div>
+                <p class="editor-caption">Editor</p>
+                <strong>Write PTX for <code>solve(A, B, C, N)</code></strong>
+              </div>
+              <div class="editor-tools">
+                <label class="ghost-button file-button">
+                  <input id="import-file" type="file" accept=".ptx" />
+                  <span>Import .ptx</span>
+                </label>
+                <button id="reset-button" class="ghost-button" type="button">Reset Template</button>
+              </div>
+            </div>
+
+            <textarea id="code-editor" spellcheck="false"></textarea>
+
+            <div class="editor-footer">
+              <span id="autosave-label">Autosaved locally</span>
+              <span id="char-count">0 chars</span>
+            </div>
           </div>
-          <div id="result-summary" class="result-summary"></div>
-          <div id="scalar-results" class="result-group"></div>
-          <div id="pointer-results" class="result-group"></div>
-          <div id="watch-results" class="result-group"></div>
-          <div class="result-group">
-            <h3>运行日志</h3>
-            <pre id="runner-logs" class="log-output"></pre>
+
+          <div class="action-row">
+            <button id="run-samples-button" class="secondary-button" type="button">Run Samples</button>
+            <button id="submit-button" class="primary-button" type="button">Submit</button>
+          </div>
+
+          <div id="action-status" class="status-banner hidden"></div>
+
+          <div class="panel result-pane">
+            <div class="result-head">
+              <div>
+                <p class="editor-caption">Judge Result</p>
+                <strong>Samples, hidden tests, and runner logs</strong>
+              </div>
+              <div id="result-mode-chip" class="mode-chip">Idle</div>
+            </div>
+
+            <div id="result-empty" class="result-empty">
+              <strong>Ready for your first submission.</strong>
+              <p>
+                Start from the provided PTX template, then use <em>Run Samples</em> to validate the visible
+                examples or <em>Submit</em> to run the complete local judge.
+              </p>
+            </div>
+
+            <div id="result-content" class="hidden">
+              <div id="result-summary" class="summary-grid"></div>
+              <div id="case-results" class="case-stack"></div>
+              <div class="log-block">
+                <h3>Judge Logs</h3>
+                <pre id="judge-logs"></pre>
+              </div>
+            </div>
           </div>
         </section>
       </main>
